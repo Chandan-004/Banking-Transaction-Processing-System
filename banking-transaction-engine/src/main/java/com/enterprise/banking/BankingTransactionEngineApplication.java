@@ -1,13 +1,19 @@
 package com.enterprise.banking;
 
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-@SpringBootApplication
+/**
+ * Entry point for the Multi-Threaded Banking Transaction Processing Engine.
+ * Built with Pure Core Java 21, JDBC, and standard Concurrency Primitives.
+ */
 public class BankingTransactionEngineApplication {
 
-	public static void main(String[] args) {
-		SpringApplication.run(BankingTransactionEngineApplication.class, args);
-	}
+    private static final Logger logger = LoggerFactory.getLogger(BankingTransactionEngineApplication.class);
 
+    public static void main(String[] args) {
+        logger.info("=================================================================");
+        logger.info("Starting Banking Transaction Processing Engine (Core Java 21)");
+        logger.info("=================================================================");
+    }
 }
