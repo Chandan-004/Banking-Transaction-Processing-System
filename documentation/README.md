@@ -1,6 +1,6 @@
 # Banking Transaction Processing System — Project Documentation
 
-**Current Stage:** Day 1 — Initial Project Scaffolding & Architecture Constraints  
+**Current Stage:** Architecture, Modeling & Design Phase  
 **Last Updated:** Day 1  
 
 ---
@@ -22,9 +22,17 @@ This project is a high-performance, multi-threaded **Banking Transaction Process
 
 ---
 
-## 2. Current Project Setup & Technology Stack (Day 1)
+## 2. 📂 Project Documentation Index
 
-### 2.1 Build & Runtime Environment
+| Document | Description | Status |
+|---|---|---|
+| [**ARCHITECTURE_AND_DESIGN.md**](file:///c:/Users/chand/OneDrive/Desktop/banking-transaction-engine/documentation/ARCHITECTURE_AND_DESIGN.md) | **Complete System Architecture, ERD, UML & Design Patterns**<br>• System Reference Architecture (5-tier decoupled pipeline)<br>• Entity-Relationship Diagram (ERD) with 5 normalized tables & constraints<br>• UML Class Diagram (Pure Java records, DAOs, Services, Strategies)<br>• UML Sequence Diagrams (Mandatory concurrency race test & transfer deadlock avoidance)<br>• Design Patterns Applied (Singleton, DAO, Template Method, Strategy, Factory) | **Active & Completed** |
+
+---
+
+## 3. Current Project Setup & Technology Stack
+
+### 3.1 Build & Runtime Environment
 * **Language & Runtime:** Java 21 (`<java.version>21</java.version>`)
 * **Build Tool:** Apache Maven (with standard `pom.xml`)
 * **Architecture Style:** Pure Core Java / Clean Modular Architecture (No Spring Boot framework dependencies)
@@ -35,7 +43,7 @@ This project is a high-performance, multi-threaded **Banking Transaction Process
 
 ---
 
-## 3. Project Structure as of Day 1
+## 4. Project Directory Structure
 
 ```
 banking-transaction-engine/
@@ -43,27 +51,17 @@ banking-transaction-engine/
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── java/com/enterprise/banking/
-│   │   │   │   └── Main.java                                  # Core Java entry point
+│   │   │   │   └── BankingTransactionEngineApplication.java  # Core Java entry point
 │   │   │   └── resources/
-│   │   │       ├── db.properties                              # Database connection properties
-│   │   │       └── logback.xml                                # SLF4J / Logback configuration
+│   │   │       ├── database.properties                       # HikariCP JDBC connection settings
+│   │   │       └── logback.xml                               # SLF4J / Logback configuration
 │   │   └── test/
 │   │       └── java/com/enterprise/banking/
-│   │           └── TransactionConcurrencyTest.java            # JUnit 5 concurrency tests
+│   │           └── BankingTransactionEngineApplicationTests.java # JUnit 5 sanity test
 │   ├── mvnw
 │   ├── mvnw.cmd
 │   └── pom.xml                                               # Pure Java Maven dependencies
 └── documentation/
-    └── README.md                                             # Project setup, constraints & documentation
+    ├── README.md                                             # Project setup, constraints & index
+    └── ARCHITECTURE_AND_DESIGN.md                           # System Architecture, ERD, UML & Patterns
 ```
-
----
-
-## 4. Incremental Documentation Plan
-
-This documentation folder will be updated step-by-step as we implement each module:
-1. **Pure Java Dependencies (`pom.xml`):** Documentation of clean Java libraries (HikariCP, MySQL Driver, Logback, JUnit 5).
-2. **Database Schema & DDL:** Documenting the 5 normalized tables, constraints, and indexes.
-3. **Core Transaction Services:** Documenting the plain JDBC transactional execution for Deposit, Withdrawal, and Transfer.
-4. **Concurrency & Locking:** Documenting the `ThreadPoolExecutor`, row-level locking (`SELECT ... FOR UPDATE`), and deterministic lock ordering.
-5. **Testing & Performance Results:** Documenting concurrency test proofs and the 50,000 transaction benchmark matrix.
