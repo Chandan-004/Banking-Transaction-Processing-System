@@ -1,7 +1,7 @@
 # Banking Transaction Processing System — Project Documentation
 
-**Current Stage:** Architecture, Modeling & Design Phase  
-**Last Updated:** Day 1  
+**Current Stage:** Day 3 — Core Java Architecture & Baseline Implementation  
+**Last Updated:** Day 3  
 
 ---
 
@@ -26,7 +26,7 @@ This project is a high-performance, multi-threaded **Banking Transaction Process
 
 | Document | Description | Status |
 |---|---|---|
-| [**ARCHITECTURE_AND_DESIGN.md**](file:///c:/Users/chand/OneDrive/Desktop/banking-transaction-engine/documentation/ARCHITECTURE_AND_DESIGN.md) | **Complete System Architecture, ERD, UML & Design Patterns**<br>• System Reference Architecture (5-tier decoupled pipeline)<br>• Entity-Relationship Diagram (ERD) with 5 normalized tables & constraints<br>• UML Class Diagram (Pure Java records, DAOs, Services, Strategies)<br>• UML Sequence Diagrams (Mandatory concurrency race test & transfer deadlock avoidance)<br>• Design Patterns Applied (Singleton, DAO, Template Method, Strategy, Factory) | **Active & Completed** |
+| [**ARCHITECTURE_AND_DESIGN.md**](file:///c:/Users/chand/OneDrive/Desktop/banking-transaction-engine/documentation/ARCHITECTURE_AND_DESIGN.md) | **Complete System Architecture, ERD, UML & Design Patterns**<br>• System Reference Architecture (5-tier decoupled pipeline)<br>• Entity-Relationship Diagram (ERD) with 5 normalized tables & constraints<br>• UML Class Diagram (Pure Java records, DAOs, Services, Strategies)<br>• Design Patterns Applied (Singleton, DAO, Pessimistic Locking, Deterministic Order, Value Object) | **Active Baseline** |
 
 ---
 
@@ -43,25 +43,64 @@ This project is a high-performance, multi-threaded **Banking Transaction Process
 
 ---
 
-## 4. Project Directory Structure
+## 4. Project Directory & Package Structure (Day 3 Status)
 
 ```
 banking-transaction-engine/
-├── banking-transaction-engine/          # Maven project root
+├── banking-transaction-engine/
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── java/com/enterprise/banking/
+│   │   │   │   ├── config/
+│   │   │   │   │   └── DatabaseConnectionManager.java       # Singleton HikariCP connection pool
+│   │   │   │   ├── dao/
+│   │   │   │   │   ├── AccountDAO.java                      # Interface for Account JDBC operations & row locks
+│   │   │   │   │   ├── TransactionDAO.java                  # Interface for Txn, Audit & Failure logging
+│   │   │   │   │   └── CustomerDAO.java                     # Interface for Customer master access
+│   │   │   │   ├── dto/
+│   │   │   │   │   ├── TransactionRequest.java              # Immutable Java 21 record for incoming requests
+│   │   │   │   │   └── TransactionResult.java               # Immutable Java 21 record for responses
+│   │   │   │   ├── exception/
+│   │   │   │   │   ├── BankingException.java                # Base domain runtime exception
+│   │   │   │   │   ├── InsufficientBalanceException.java    # Balance sufficiency violation
+│   │   │   │   │   ├── AccountNotFoundException.java        # Missing account error
+│   │   │   │   │   ├── AccountInactiveException.java        # Suspended / closed account error
+│   │   │   │   │   ├── DuplicateTransactionException.java   # Idempotency duplicate violation
+│   │   │   │   │   └── InvalidTransactionException.java     # Input validation rule violation
+│   │   │   │   ├── model/
+│   │   │   │   │   ├── Account.java                         # Account domain entity with debit/credit logic
+│   │   │   │   │   ├── AccountStatus.java                   # ACTIVE, SUSPENDED, CLOSED enum
+│   │   │   │   │   ├── Customer.java                        # Customer entity
+│   │   │   │   │   ├── ErrorCategory.java                   # Standard error categories enum
+│   │   │   │   │   ├── FailedTransaction.java               # Failure log diagnostic entity
+│   │   │   │   │   ├── TransactionAudit.java                # Financial before/after balance audit entity
+│   │   │   │   │   ├── TransactionRecord.java               # Transaction row entity
+│   │   │   │   │   ├── TransactionStatus.java               # SUCCESS, FAILED, REJECTED enum
+│   │   │   │   │   └── TransactionType.java                 # DEPOSIT, WITHDRAWAL, TRANSFER enum
 │   │   │   │   └── BankingTransactionEngineApplication.java  # Core Java entry point
 │   │   │   └── resources/
 │   │   │       ├── database.properties                       # HikariCP JDBC connection settings
-│   │   │       └── logback.xml                               # SLF4J / Logback configuration
+│   │   │       ├── logback.xml                               # SLF4J / Logback configuration
+│   │   │       └── schema.sql                                # Normalized 5-table MySQL DDL with constraints
 │   │   └── test/
 │   │       └── java/com/enterprise/banking/
-│   │           └── BankingTransactionEngineApplicationTests.java # JUnit 5 sanity test
+│   │           └── BankingTransactionEngineApplicationTests.java # JUnit 5 test
 │   ├── mvnw
 │   ├── mvnw.cmd
 │   └── pom.xml                                               # Pure Java Maven dependencies
 └── documentation/
-    ├── README.md                                             # Project setup, constraints & index
+    ├── README.md                                             # Project setup, constraints & package catalog
     └── ARCHITECTURE_AND_DESIGN.md                           # System Architecture, ERD, UML & Patterns
 ```
+
+---
+
+## 5. Day 3 Completed Milestones
+
+1. **Domain Models & Enums:** Defined all 5 relational entities (`Customer`, `Account`, `TransactionRecord`, `TransactionAudit`, `FailedTransaction`) with business helpers (`debit`, `credit`, `isSufficientFor`, `isActive`).
+2. **Immutable DTO Records:** Created `TransactionRequest` and `TransactionResult` using Java 21 `record`s for thread-safe data flow.
+3. **Custom Exception Hierarchy:** Implemented specific business exceptions corresponding to each validation and execution failure category.
+4. **Data Access Interfaces (DAO Pattern):** Created `AccountDAO`, `TransactionDAO`, and `CustomerDAO` contracts taking raw `Connection` to support service-level transaction boundaries.
+5. **Connection Pooling Singleton:** Implemented `DatabaseConnectionManager` with HikariCP pool properties.
+6. **DDL Schema Script:** Created `src/main/resources/schema.sql` with all constraints (`CHECK balance >= 0`, `CHECK amount > 0`, PK, FK, performance indexes).
+7. **Verification:** Verified clean compilation and green test execution via Maven.
