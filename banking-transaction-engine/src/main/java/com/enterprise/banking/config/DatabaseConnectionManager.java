@@ -12,7 +12,10 @@ import java.util.Properties;
 
 /**
  * Singleton database connection manager using HikariCP.
- * Thread-safe and shared across all worker threads.
+ * Seamlessly resolves configuration with priority:
+ * 1. OS Environment Variables & .env file (via EnvLoader)
+ * 2. database.properties file
+ * 3. Sensible local defaults
  */
 public class DatabaseConnectionManager {
 
@@ -24,14 +27,23 @@ public class DatabaseConnectionManager {
     private DatabaseConnectionManager() {
         Properties props = loadProperties();
 
-        HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(props.getProperty("db.url", "jdbc:mysql://localhost:3306/banking_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"));
-        config.setUsername(props.getProperty("db.username", "root"));
-        config.setPassword(props.getProperty("db.password", "root"));
+        // Resolve credentials from .env first, fallback to database.properties
+        String jdbcUrl = EnvLoader.get("DB_URL", props.getProperty("db.url",
+                "jdbc:mysql://localhost:3306/banking_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"));
+        String username = EnvLoader.get("DB_USERNAME", props.getProperty("db.username", "root"));
+        String password = EnvLoader.get("DB_PASSWORD", props.getProperty("db.password", "root"));
 
-        int maxPoolSize = Integer.parseInt(props.getProperty("db.pool.maximum-size", "25"));
-        int minIdle = Integer.parseInt(props.getProperty("db.pool.minimum-idle", "5"));
-        long connTimeout = Long.parseLong(props.getProperty("db.pool.connection-timeout", "30000"));
+        int maxPoolSize = Integer.parseInt(EnvLoader.get("DB_POOL_MAX_SIZE",
+                props.getProperty("db.pool.maximum-size", "25")));
+        int minIdle = Integer.parseInt(EnvLoader.get("DB_POOL_MIN_IDLE",
+                props.getProperty("db.pool.minimum-idle", "5")));
+        long connTimeout = Long.parseLong(EnvLoader.get("DB_POOL_TIMEOUT",
+                props.getProperty("db.pool.connection-timeout", "30000")));
+
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(jdbcUrl);
+        config.setUsername(username);
+        config.setPassword(password);
 
         config.setMaximumPoolSize(maxPoolSize);
         config.setMinimumIdle(minIdle);
@@ -47,7 +59,7 @@ public class DatabaseConnectionManager {
         config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
 
         this.dataSource = new HikariDataSource(config);
-        logger.info("Initialized HikariCP connection pool with max-pool-size={}", maxPoolSize);
+        logger.info("Initialized HikariCP connection pool [url={}, poolSize={}]", jdbcUrl, maxPoolSize);
     }
 
     public static DatabaseConnectionManager getInstance() {
