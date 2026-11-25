@@ -27,7 +27,6 @@ public class DatabaseConnectionManager {
     private DatabaseConnectionManager() {
         Properties props = loadProperties();
 
-        // Resolve credentials from .env first, fallback to database.properties
         String jdbcUrl = EnvLoader.get("DB_URL", props.getProperty("db.url",
                 "jdbc:mysql://localhost:3306/banking_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"));
         String username = EnvLoader.get("DB_USERNAME", props.getProperty("db.username", "root"));
@@ -53,13 +52,17 @@ public class DatabaseConnectionManager {
         // Prevents failure on initial instantiation if DB is starting up
         config.setInitializationFailTimeout(-1);
 
-        // Sensible defaults for high-concurrency MySQL
         config.addDataSourceProperty("cachePrepStmts", "true");
         config.addDataSourceProperty("prepStmtCacheSize", "250");
         config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
 
         this.dataSource = new HikariDataSource(config);
         logger.info("Initialized HikariCP connection pool [url={}, poolSize={}]", jdbcUrl, maxPoolSize);
+    }
+
+    // Constructor for custom or test data sources
+    public DatabaseConnectionManager(HikariDataSource dataSource) {
+        this.dataSource = dataSource;
     }
 
     public static DatabaseConnectionManager getInstance() {
@@ -71,6 +74,17 @@ public class DatabaseConnectionManager {
             }
         }
         return instance;
+    }
+
+    public static DatabaseConnectionManager createForTest(String jdbcUrl, String username, String password) {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(jdbcUrl);
+        config.setUsername(username);
+        config.setPassword(password);
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(2);
+        config.setPoolName("BankingEngineTestPool");
+        return new DatabaseConnectionManager(new HikariDataSource(config));
     }
 
     public Connection getConnection() throws SQLException {
