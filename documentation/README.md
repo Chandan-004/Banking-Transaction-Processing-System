@@ -1,6 +1,6 @@
 # Banking Transaction Processing System — Project Documentation
 
-**Current Stage:** Phase 2 (Days 4–7) — Core Money Movement, JDBC & SQL Implementation  
+**Current Stage:** Phase 3 (Days 8–11) — Concurrency, Thread Lifecycle & ExecutorService Implementation  
 **Last Updated:** Current  
 
 ---
@@ -36,6 +36,7 @@ This project is a high-performance, multi-threaded **Banking Transaction Process
 * **Language & Runtime:** Java 21 (`<java.version>21</java.version>`)
 * **Build Tool:** Apache Maven (with standard `pom.xml`)
 * **Architecture Style:** Pure Core Java / Clean Modular Architecture (No Spring Boot framework dependencies)
+* **Concurrency Layer:** `java.util.concurrent.ThreadPoolExecutor`, `CompletableFuture`, bounded `ArrayBlockingQueue`, custom `ThreadFactory`
 * **Database:** MySQL / PostgreSQL via standard JDBC (`java.sql.Connection`, `PreparedStatement`)
 * **Connection Pooling:** HikariCP (`com.zaxxer:HikariCP`)
 * **Logging:** SLF4J API (`org.slf4j:slf4j-api`) + Logback Classic (`ch.qos.logback:logback-classic`)
@@ -51,6 +52,9 @@ banking-transaction-engine/
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── java/com/enterprise/banking/
+│   │   │   │   ├── concurrency/
+│   │   │   │   │   ├── ConcurrentTransactionProcessor.java  # Bounded ThreadPoolExecutor & async CompletableFuture
+│   │   │   │   │   └── CustomThreadFactory.java             # Thread lifecycle & named worker generator
 │   │   │   │   ├── config/
 │   │   │   │   │   ├── DatabaseConnectionManager.java       # Singleton HikariCP connection pool
 │   │   │   │   │   └── EnvLoader.java                       # Pure Java .env & environment variable loader
@@ -96,6 +100,7 @@ banking-transaction-engine/
 │   │           ├── BankingTransactionEngineTest.java         # Money movement integration tests (10 tests)
 │   │           ├── EnvLoaderTest.java                        # Environment loader tests (1 test)
 │   │           ├── ExceptionHierarchyTest.java               # Exception hierarchy tests (1 test)
+│   │           ├── MandatoryConcurrencyTest.java             # Concurrency proof & 20-thread tests (3 tests)
 │   │           └── TransactionDtoTest.java                   # DTO record tests (2 tests)
 │   ├── .env                                                  # Ignored active secrets
 │   ├── .env.example                                          # Environment template
@@ -112,11 +117,12 @@ banking-transaction-engine/
 ## 5. Milestone Progress Log
 
 * **Phase 1 (Days 1–3) [Completed]:** Requirements decomposition, 5-table normalized schema, Core Java architecture without Spring Boot, domain models, immutable records, custom exceptions, DAO contracts, `.env` integration, and HikariCP connection pool setup.
-* **Phase 2 (Days 4–7) [Completed Today]:**
-  1. **Customer & Account Models:** Fully implemented with defensive validation and overdraft prevention.
-  2. **Plain JDBC DAO Implementations:** `CustomerDAOImpl`, `AccountDAOImpl`, and `TransactionDAOImpl` utilizing parameterized `PreparedStatement`s.
-  3. **Core Money Movement:** Implemented `deposit()`, `withdraw()`, and `transfer()` in `BankingTransactionEngine` enforcing the 7-step transaction lifecycle.
-  4. **Pessimistic Row Locking:** Implemented `SELECT ... FOR UPDATE` queries in `AccountDAOImpl`.
-  5. **Deterministic Lock Ordering:** Enforced `min(accA, accB) -> max(accA, accB)` lock acquisition order in transfers to prevent circular deadlocks.
-  6. **Idempotency Gate & Audit Logging:** Implemented duplicate transaction prevention and balance audit persistence (`TRANSACTION_AUDIT` & `FAILED_TRANSACTION`).
-  7. **Comprehensive Test Suite:** **22 automated unit and integration tests passing cleanly (`BUILD SUCCESS`)**.
+* **Phase 2 (Days 4–7) [Completed]:** Customer & Account models, plain JDBC DAO implementations, core money movement (Deposit, Withdraw, Transfer), row-level pessimistic locking (`SELECT ... FOR UPDATE`), and deterministic lock ordering.
+* **Phase 3 (Days 8–11) [Completed Today]:**
+  1. **Thread Lifecycle & Naming:** Implemented `CustomThreadFactory` to assign identifiable names (`txn-worker-1`, `txn-worker-2`) propagated into SLF4J MDC and `TRANSACTION_AUDIT`.
+  2. **Bounded Execution Layer:** Implemented `ConcurrentTransactionProcessor` wrapping `ThreadPoolExecutor` with a bounded queue (`ArrayBlockingQueue`) and `CallerRunsPolicy` backpressure.
+  3. **Lifecycle Management:** Clean asynchronous submission with `CompletableFuture`, batch processing, graceful shutdown, and termination awaiters.
+  4. **Mandatory Concurrency Scenario Test:** Proven that an account with ₹10,000 opening balance subjected to simultaneous ₹7,000 and ₹5,000 withdrawals allows exactly one to succeed and prevents negative balances.
+  5. **20-Thread Concurrent Stress Test:** Verified 20 concurrent threads hammering an account with zero balance corruption and zero lost updates.
+  6. **Deadlock Freedom (20 Workers):** Verified 20 concurrent threads running cross-transfers ($A \rightarrow B$ and $B \rightarrow A$) execute cleanly without deadlocks.
+  7. **Comprehensive Test Suite:** **25 automated tests passing cleanly (`BUILD SUCCESS`)**.
