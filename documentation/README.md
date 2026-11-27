@@ -53,8 +53,10 @@ banking-transaction-engine/
 │   │   ├── main/
 │   │   │   ├── java/com/enterprise/banking/
 │   │   │   │   ├── concurrency/
-│   │   │   │   │   ├── ConcurrentTransactionProcessor.java  # Bounded ThreadPoolExecutor & async CompletableFuture
-│   │   │   │   │   └── CustomThreadFactory.java             # Thread lifecycle & named worker generator
+│   │   │   │   │   ├── AccountLockManager.java              # Fine-grained in-memory ReentrantLock & deterministic dual locking
+│   │   │   │   │   ├── ConcurrentTransactionProcessor.java  # Bounded ThreadPoolExecutor, Callable, Future & CompletableFuture
+│   │   │   │   │   ├── CustomThreadFactory.java             # Thread lifecycle & named worker generator (txn-worker-n)
+│   │   │   │   │   └── TransactionTask.java                 # Callable<TransactionResult> task wrapper
 │   │   │   │   ├── config/
 │   │   │   │   │   ├── DatabaseConnectionManager.java       # Singleton HikariCP connection pool
 │   │   │   │   │   └── EnvLoader.java                       # Pure Java .env & environment variable loader
@@ -98,6 +100,7 @@ banking-transaction-engine/
 │   │           ├── AccountTest.java                          # Account unit tests (7 tests)
 │   │           ├── BankingTransactionEngineApplicationTests.java # Sanity test (1 test)
 │   │           ├── BankingTransactionEngineTest.java         # Money movement integration tests (10 tests)
+│   │           ├── CallableFutureAndLockingTest.java         # Callable, Future, AccountLockManager & dual locks (4 tests)
 │   │           ├── EnvLoaderTest.java                        # Environment loader tests (1 test)
 │   │           ├── ExceptionHierarchyTest.java               # Exception hierarchy tests (1 test)
 │   │           ├── MandatoryConcurrencyTest.java             # Concurrency proof & 20-thread tests (3 tests)
@@ -121,8 +124,10 @@ banking-transaction-engine/
 * **Phase 3 (Days 8–11) [Completed Today]:**
   1. **Thread Lifecycle & Naming:** Implemented `CustomThreadFactory` to assign identifiable names (`txn-worker-1`, `txn-worker-2`) propagated into SLF4J MDC and `TRANSACTION_AUDIT`.
   2. **Bounded Execution Layer:** Implemented `ConcurrentTransactionProcessor` wrapping `ThreadPoolExecutor` with a bounded queue (`ArrayBlockingQueue`) and `CallerRunsPolicy` backpressure.
-  3. **Lifecycle Management:** Clean asynchronous submission with `CompletableFuture`, batch processing, graceful shutdown, and termination awaiters.
-  4. **Mandatory Concurrency Scenario Test:** Proven that an account with ₹10,000 opening balance subjected to simultaneous ₹7,000 and ₹5,000 withdrawals allows exactly one to succeed and prevents negative balances.
-  5. **20-Thread Concurrent Stress Test:** Verified 20 concurrent threads hammering an account with zero balance corruption and zero lost updates.
-  6. **Deadlock Freedom (20 Workers):** Verified 20 concurrent threads running cross-transfers ($A \rightarrow B$ and $B \rightarrow A$) execute cleanly without deadlocks.
-  7. **Comprehensive Test Suite:** **25 automated tests passing cleanly (`BUILD SUCCESS`)**.
+  3. **Callable & Future Submission:** Created `TransactionTask` implementing `Callable<TransactionResult>` and exposed `submit(Callable)`, `submitCallable(TransactionRequest)`, and `invokeAll(List<Callable>)` returning typed `Future` instances.
+  4. **In-Memory Synchronization & Locking (`AccountLockManager`):** Fine-grained per-account fair `ReentrantLock` stored in `ConcurrentHashMap`. Prevents race conditions before hitting the database.
+  5. **Deterministic Dual Locking:** Implemented `executeWithDualLocks(accountA, accountB)` enforcing canonical ordering (`min -> max`) to eliminate circular wait deadlocks on reciprocal transfers.
+  6. **Mandatory Concurrency Scenario Test:** Proven that an account with ₹10,000 opening balance subjected to simultaneous ₹7,000 and ₹5,000 withdrawals allows exactly one to succeed and prevents negative balances.
+  7. **20-Thread Concurrent Stress Test:** Verified 20 concurrent threads hammering an account with zero balance corruption and zero lost updates.
+  8. **Deadlock Freedom (20 Workers):** Verified 20 concurrent threads running cross-transfers ($A \rightarrow B$ and $B \rightarrow A$) execute cleanly without deadlocks.
+  9. **Comprehensive Test Suite:** **29 automated tests passing cleanly (`BUILD SUCCESS`)** across 8 test suites.

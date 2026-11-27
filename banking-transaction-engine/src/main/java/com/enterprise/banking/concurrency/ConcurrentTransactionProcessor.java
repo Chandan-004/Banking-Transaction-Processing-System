@@ -17,7 +17,9 @@ import java.util.concurrent.*;
  *
  * Implements the Bounded Execution Layer mandated in PDF Reference Architecture:
  * - Configurable worker count (1, 5, 10, 20 threads).
+ * - Callable and Future submission models.
  * - Backpressure via bounded queue and CallerRunsPolicy.
+ * - In-memory synchronization & locking via AccountLockManager to prevent race conditions.
  * - Clean lifecycle management (graceful shutdown, await termination).
  */
 public class ConcurrentTransactionProcessor implements AutoCloseable {
@@ -26,17 +28,16 @@ public class ConcurrentTransactionProcessor implements AutoCloseable {
 
     private final BankingTransactionEngine engine;
     private final ThreadPoolExecutor executor;
+    private final AccountLockManager lockManager;
     private final int workerCount;
 
-    /**
-     * Constructs a processor with specified worker thread count and queue capacity.
-     *
-     * @param engine        the core transaction engine
-     * @param workerCount   number of worker threads (e.g. 1, 5, 10, 20)
-     * @param queueCapacity capacity of the bounded blocking queue
-     */
     public ConcurrentTransactionProcessor(BankingTransactionEngine engine, int workerCount, int queueCapacity) {
+        this(engine, workerCount, queueCapacity, new AccountLockManager());
+    }
+
+    public ConcurrentTransactionProcessor(BankingTransactionEngine engine, int workerCount, int queueCapacity, AccountLockManager lockManager) {
         this.engine = Objects.requireNonNull(engine, "BankingTransactionEngine cannot be null");
+        this.lockManager = Objects.requireNonNull(lockManager, "AccountLockManager cannot be null");
         if (workerCount <= 0) {
             throw new IllegalArgumentException("Worker count must be strictly positive");
         }
@@ -60,12 +61,45 @@ public class ConcurrentTransactionProcessor implements AutoCloseable {
                 workerCount, queueCapacity);
     }
 
+    // =========================================================================
+    // Future & CompletableFuture Submission APIs
+    // =========================================================================
+
     /**
-     * Submits a single transaction asynchronously.
-     * Returns a CompletableFuture holding the TransactionResult.
+     * Submits a transaction as an explicit Callable, returning a Future.
+     */
+    public Future<TransactionResult> submit(Callable<TransactionResult> task) {
+        return executor.submit(task);
+    }
+
+    /**
+     * Submits a TransactionRequest wrapped in a synchronized TransactionTask Callable,
+     * returning a Future<TransactionResult>.
+     */
+    public Future<TransactionResult> submitCallable(TransactionRequest request) {
+        Callable<TransactionResult> task = wrapWithLocking(request);
+        return executor.submit(task);
+    }
+
+    /**
+     * Submits a single transaction asynchronously using CompletableFuture.
      */
     public CompletableFuture<TransactionResult> submit(TransactionRequest request) {
-        return CompletableFuture.supplyAsync(() -> engine.process(request), executor);
+        Callable<TransactionResult> task = wrapWithLocking(request);
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return task.call();
+            } catch (Exception e) {
+                return TransactionResult.failed(request.transactionId(), e.getMessage(), 0);
+            }
+        }, executor);
+    }
+
+    /**
+     * Executes a list of Callables via ExecutorService.invokeAll, waiting for all Futures.
+     */
+    public List<Future<TransactionResult>> invokeAll(List<Callable<TransactionResult>> tasks) throws InterruptedException {
+        return executor.invokeAll(tasks);
     }
 
     /**
@@ -81,7 +115,6 @@ public class ConcurrentTransactionProcessor implements AutoCloseable {
             futures.add(submit(request));
         }
 
-        // Wait for all worker threads to finish their assigned tasks
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
         List<TransactionResult> results = new ArrayList<>(futures.size());
@@ -92,29 +125,38 @@ public class ConcurrentTransactionProcessor implements AutoCloseable {
     }
 
     // =========================================================================
-    // Lifecycle Management
+    // Synchronization & Locking Helper
     // =========================================================================
 
     /**
-     * Initiates an orderly shutdown where previously submitted tasks are executed.
+     * Wraps a transaction request with in-memory synchronization via AccountLockManager.
+     * Prevents thread contention and race conditions at the application layer.
      */
+    private Callable<TransactionResult> wrapWithLocking(TransactionRequest req) {
+        return switch (req.type()) {
+            case DEPOSIT -> {
+                String targetId = req.destinationAccount() != null ? req.destinationAccount() : req.sourceAccount();
+                yield () -> lockManager.executeWithLock(targetId, () -> engine.process(req));
+            }
+            case WITHDRAWAL -> () -> lockManager.executeWithLock(req.sourceAccount(), () -> engine.process(req));
+            case TRANSFER -> () -> lockManager.executeWithDualLocks(req.sourceAccount(), req.destinationAccount(), () -> engine.process(req));
+        };
+    }
+
+    // =========================================================================
+    // Lifecycle Management
+    // =========================================================================
+
     public void shutdown() {
         logger.info("Initiating graceful shutdown of ConcurrentTransactionProcessor...");
         executor.shutdown();
     }
 
-    /**
-     * Attempts to stop all actively executing tasks and halts task processing.
-     */
     public List<Runnable> shutdownNow() {
         logger.warn("Initiating immediate shutdownNow of ConcurrentTransactionProcessor...");
         return executor.shutdownNow();
     }
 
-    /**
-     * Blocks until all tasks have completed execution after a shutdown request,
-     * or the timeout occurs, or the current thread is interrupted.
-     */
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
         return executor.awaitTermination(timeout, unit);
     }
@@ -135,6 +177,10 @@ public class ConcurrentTransactionProcessor implements AutoCloseable {
     // =========================================================================
     // Runtime Monitoring & Metrics
     // =========================================================================
+
+    public AccountLockManager getLockManager() {
+        return lockManager;
+    }
 
     public int getWorkerCount() {
         return workerCount;

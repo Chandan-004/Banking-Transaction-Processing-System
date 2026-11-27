@@ -175,6 +175,10 @@
 |---|---|---|
 | **`TransactionRequest`** | Ingestion & Controller layer | Immutable Java 21 `record` to safely transfer transaction inputs across threads without race conditions. |
 | **`TransactionResult`** | Engine output & API response | Standard response object returning `SUCCESS`, `FAILED`, or `REJECTED` status, new balances, and execution time. |
+| **`TransactionTask`** | Concurrency / Task layer | `Callable<TransactionResult>` encapsulating the transaction operation for executor thread execution and `Future` return. |
+| **`ConcurrentTransactionProcessor`** | Concurrency / Thread Pool layer | Bounded `ThreadPoolExecutor` managing worker threads (1, 5, 10, 20), queue backpressure, `Callable`/`Future`/`CompletableFuture` APIs, and shutdown lifecycle. |
+| **`AccountLockManager`** | Concurrency / Synchronization layer | In-memory fine-grained `ReentrantLock` manager with `ConcurrentHashMap` providing single-account locking and deterministic dual locking for transfers. |
+| **`CustomThreadFactory`** | Concurrency / Thread Factory | Generates named, daemonless worker threads (`txn-worker-n`) with uncaught exception logging. |
 | **`Account`** | Domain Entity | Encapsulates account properties (`balance`, `status`) and ensures balance calculations are centralized. |
 | **`BankingTransactionEngine`** | Service Layer | Main orchestrator that runs the 7-step transaction sequence, handles deterministic lock ordering, and coordinates rollbacks. |
 | **`AccountDAO`** | Data Access Layer | Executes plain JDBC queries (`SELECT ... FOR UPDATE`) to lock and update account rows. |
@@ -184,24 +188,36 @@
 
 ---
 
-## 4. Design Patterns: Where & Why (Short & Crisp)
+## 4. Design Patterns & Concurrency Primitives: Where & Why (Short & Crisp)
+
+* **Command / Task Pattern (`TransactionTask` implementing `Callable<TransactionResult>`):**
+  * *Where:* Concurrency task submission.
+  * *Why:* Encapsulates banking operations into typed, callable units executed asynchronously via `ExecutorService` and retrieved via `Future.get()`.
+
+* **Bounded Thread Pool & Backpressure (`ThreadPoolExecutor`):**
+  * *Where:* `ConcurrentTransactionProcessor`.
+  * *Why:* Caps concurrency to 1, 5, 10, or 20 worker threads using `ArrayBlockingQueue` and `CallerRunsPolicy` to prevent Out-Of-Memory (OOM) failures under 50,000+ transaction loads.
+
+* **In-Memory Fine-Grained Locking (`AccountLockManager`):**
+  * *Where:* Application synchronization before database interaction.
+  * *Why:* Uses per-account fair `ReentrantLock` instances stored in a `ConcurrentHashMap` to serialize concurrent requests targeting the same account. Completely eliminates race conditions and reduces database lock contention.
+
+* **Deterministic Lock Ordering (`min(ID) -> max(ID)`):**
+  * *Where:* `AccountLockManager.executeWithDualLocks()` and `BankingTransactionEngine.processTransfer()`.
+  * *Why:* When transferring funds between two accounts, always acquires the lock on the lower account ID first, then the higher account ID. Mathematically eliminates circular wait conditions and guarantees zero deadlocks.
+
+* **Pessimistic Database Locking (`SELECT ... FOR UPDATE`):**
+  * *Where:* `AccountDAO.findByIdForUpdate()`.
+  * *Why:* Locks account rows at the database level so concurrent threads or multi-instance deployments cannot create dirty reads, lost updates, or negative balances.
 
 * **Singleton Pattern (`DatabaseConnectionManager`):**
   * *Where:* HikariCP connection pool.
-  * *Why:* Only 1 database pool must exist across all worker threads to prevent socket exhaustion.
+  * *Why:* Only 1 database pool exists across all worker threads to prevent socket and connection leaks.
 
 * **DAO Pattern (`AccountDAO`, `TransactionDAO`):**
   * *Where:* Data access layer.
-  * *Why:* Keeps messy SQL statements separate from business logic.
-
-* **Pessimistic Locking (`SELECT ... FOR UPDATE`):**
-  * *Where:* `AccountDAO.findByIdForUpdate()`.
-  * *Why:* Locks account rows at the database level so concurrent threads cannot overwrite each other's balances.
-
-* **Deterministic Lock Ordering (`min(ID) -> max(ID)`):**
-  * *Where:* `BankingTransactionEngine.processTransfer()`.
-  * *Why:* In transfers between two accounts, always locks smaller ID first to prevent circular deadlocks.
+  * *Why:* Decouples business transaction logic from raw SQL `PreparedStatement` executions.
 
 * **Value Object Pattern (`TransactionRequest`, `TransactionResult`):**
-  * *Where:* DTOs passed between threads.
-  * *Why:* Java `record`s are immutable and 100% thread-safe by default.
+  * *Where:* DTOs passed between threads and layers.
+  * *Why:* Java `record`s are deeply immutable and inherently thread-safe across concurrent threads.
