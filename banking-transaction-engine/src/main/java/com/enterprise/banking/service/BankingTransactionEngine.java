@@ -82,6 +82,16 @@ public class BankingTransactionEngine {
             logger.warn("Transaction [{}] DUPLICATE DETECTED: {}", request.transactionId(), ex.getMessage());
             return TransactionResult.rejected(request.transactionId(), ex.getMessage());
 
+        } catch (SQLException ex) {
+            long duration = System.currentTimeMillis() - startTime;
+            if (isDuplicateKeyViolation(ex)) {
+                logger.warn("Transaction [{}] DB UNIQUE CONSTRAINT DUPLICATE DETECTED: {}", request.transactionId(), ex.getMessage());
+                return TransactionResult.rejected(request.transactionId(), "Duplicate transaction ID (database constraint violation): " + request.transactionId());
+            }
+            logger.error("Transaction [{}] SQL ERROR: {}", request.transactionId(), ex.getMessage(), ex);
+            recordRejectionOrFailure(request, TransactionStatus.FAILED, ErrorCategory.SYSTEM_ERROR, ex.getMessage());
+            return TransactionResult.failed(request.transactionId(), "Database error: " + ex.getMessage(), duration);
+
         } catch (Exception ex) {
             long duration = System.currentTimeMillis() - startTime;
             logger.error("Transaction [{}] SYSTEM ERROR: {}", request.transactionId(), ex.getMessage(), ex);
@@ -132,7 +142,7 @@ public class BankingTransactionEngine {
 
             // Step 2: Idempotency Check
             if (transactionDAO.isDuplicate(conn, request.transactionId())) {
-                throw new DuplicateTransactionException("Transaction ID already processed: " + request.transactionId());
+                throw new DuplicateTransactionException("Duplicate transaction ID already processed: " + request.transactionId());
             }
 
             // Step 3: Begin explicit transaction boundary
@@ -349,5 +359,12 @@ public class BankingTransactionEngine {
         MDC.put("txId", req.transactionId());
         MDC.put("op", req.type() != null ? req.type().name() : "UNKNOWN");
         MDC.put("thread", Thread.currentThread().getName());
+    }
+
+    private boolean isDuplicateKeyViolation(SQLException ex) {
+        String sqlState = ex.getSQLState();
+        int errorCode = ex.getErrorCode();
+        return (sqlState != null && (sqlState.startsWith("23") || "23505".equals(sqlState) || "23000".equals(sqlState)))
+                || errorCode == 1062;
     }
 }

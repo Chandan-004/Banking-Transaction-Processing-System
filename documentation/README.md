@@ -99,7 +99,7 @@ banking-transaction-engine/
 │   │       └── java/com/enterprise/banking/
 │   │           ├── AccountTest.java                          # Account unit tests (7 tests)
 │   │           ├── BankingTransactionEngineApplicationTests.java # Sanity test (1 test)
-│   │           ├── BankingTransactionEngineTest.java         # Money movement integration tests (10 tests)
+│   │           ├── BankingTransactionEngineTest.java         # Money movement, transactions, rollback & idempotency tests (14 tests)
 │   │           ├── CallableFutureAndLockingTest.java         # Callable, Future, AccountLockManager & dual locks (4 tests)
 │   │           ├── EnvLoaderTest.java                        # Environment loader tests (1 test)
 │   │           ├── ExceptionHierarchyTest.java               # Exception hierarchy tests (1 test)
@@ -130,4 +130,7 @@ banking-transaction-engine/
   6. **Mandatory Concurrency Scenario Test:** Proven that an account with ₹10,000 opening balance subjected to simultaneous ₹7,000 and ₹5,000 withdrawals allows exactly one to succeed and prevents negative balances.
   7. **20-Thread Concurrent Stress Test:** Verified 20 concurrent threads hammering an account with zero balance corruption and zero lost updates.
   8. **Deadlock Freedom (20 Workers):** Verified 20 concurrent threads running cross-transfers ($A \rightarrow B$ and $B \rightarrow A$) execute cleanly without deadlocks.
-  9. **Comprehensive Test Suite:** **29 automated tests passing cleanly (`BUILD SUCCESS`)** across 8 test suites.
+  9. **Database Transactions & Rollback Invariance:** Explicit JDBC boundaries (`setAutoCommit(false)`, `commit()`, `rollback()`) guarantee that any monetary failure completely rolls back balance changes while an autonomous connection guarantees the diagnostic is recorded in `failed_transaction`.
+  10. **Dual-Tier Idempotency Enforcement:** Combines application-level duplicate detection (`isDuplicate`) with database primary key / unique constraint enforcement (`isDuplicateKeyViolation`), verified under concurrent load where 10 threads submit the same ID with exactly one balance debit.
+  11. **Custom Exceptions & Category Mapping:** Complete domain hierarchy rooted in `BankingException` with explicit `ErrorCategory` mapping and status consistency (`REJECTED` vs `FAILED`).
+  12. **Comprehensive Test Suite:** **33 automated tests passing cleanly (`BUILD SUCCESS`)** across 8 test suites.

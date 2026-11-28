@@ -221,3 +221,41 @@
 * **Value Object Pattern (`TransactionRequest`, `TransactionResult`):**
   * *Where:* DTOs passed between threads and layers.
   * *Why:* Java `record`s are deeply immutable and inherently thread-safe across concurrent threads.
+
+---
+
+## 5. Reliability: Database Transactions, Idempotency & Error Architecture
+
+### 5.1 Explicit Database Transactions & Rollback Invariance (PDF §6.2)
+* **Atomic Boundaries:** Every monetary operation executes within an explicit JDBC transaction block:
+  ```java
+  conn.setAutoCommit(false);
+  try {
+      // 1. Pessimistic lock row(s) in deterministic order: SELECT ... FOR UPDATE
+      // 2. Validate balance sufficiency
+      // 3. Debit/Credit account(s)
+      // 4. Save transaction & audit records
+      conn.commit();
+  } catch (Exception ex) {
+      conn.rollback();
+      throw ex;
+  }
+  ```
+* **Autonomous Failure Persistence:** If monetary changes fail, `conn.rollback()` restores balances to their exact pre-transaction state. The failure diagnostic is then persisted via an independent connection into `failed_transaction`, guaranteeing that failure diagnostics are never lost during a rollback.
+* **Visible Success Invariant:** A `SUCCESS` status is returned to the client if and only if `conn.commit()` executes without errors.
+
+### 5.2 Dual-Tier Idempotency Architecture (PDF §6.3)
+To ensure repeated transaction IDs never cause duplicate balance modifications:
+1. **Tier 1 (Application Gate):** `TransactionDAO.isDuplicate(conn, txId)` checks the `transaction` table before initiating balance locks. If found, a `DuplicateTransactionException` is thrown immediately.
+2. **Tier 2 (Database Uniqueness Constraint):** The relational schema enforces `PRIMARY KEY (transaction_id)`. If concurrent duplicate requests race past the application check at the same millisecond, the database rejects the second insert with an integrity violation (`SQLState 23000 / 23505 / Error 1062`), triggering an automatic rollback of uncommitted balance changes and returning `REJECTED`.
+
+### 5.3 Custom Exceptions & Error Taxonomy (PDF §6.4)
+All domain errors inherit from the unchecked base `BankingException` and map to an auditable `ErrorCategory` and `TransactionStatus`:
+
+| Custom Exception | Category (`ErrorCategory`) | Outcome (`TransactionStatus`) | Rollback Behavior |
+|---|---|---|---|
+| `InsufficientBalanceException` | `INSUFFICIENT_FUNDS` | `FAILED` | Balance changes rolled back; failure recorded in `failed_transaction`. |
+| `AccountNotFoundException` | `ACCOUNT_NOT_FOUND` | `REJECTED` | Transaction rejected before balance operations. |
+| `AccountInactiveException` | `ACCOUNT_INACTIVE` | `REJECTED` | Transaction rejected; inactive account preserved. |
+| `DuplicateTransactionException` | `DUPLICATE_TRANSACTION` | `REJECTED` | Idempotency guard: zero financial impact. |
+| `InvalidTransactionException` | `INVALID_TRANSACTION` / `INVALID_AMOUNT` | `REJECTED` | Validation gate: non-positive amounts or null IDs rejected. |

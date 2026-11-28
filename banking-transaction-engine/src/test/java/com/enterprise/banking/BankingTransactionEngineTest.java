@@ -15,10 +15,15 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -267,5 +272,111 @@ class BankingTransactionEngineTest {
             Account acc1 = accountDAO.findById(conn, "ACC1").orElseThrow();
             assertEquals(new BigDecimal("9000.00"), acc1.getBalance());
         }
+    }
+
+    @Test
+    @DisplayName("IDEMPOTENCY: Concurrent duplicate submissions change balance exactly once")
+    void testConcurrentIdempotency() throws Exception {
+        int threads = 10;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        List<Future<TransactionResult>> futures = new ArrayList<>();
+
+        for (int i = 0; i < threads; i++) {
+            futures.add(executor.submit(() ->
+                engine.process(new TransactionRequest("TXN-DUP-CONCURRENT", "ACC1", null, new BigDecimal("500.00"), TransactionType.WITHDRAWAL))
+            ));
+        }
+
+        int successCount = 0;
+        int rejectedCount = 0;
+        for (Future<TransactionResult> future : futures) {
+            TransactionResult res = future.get(5, TimeUnit.SECONDS);
+            if (res.isSuccess()) {
+                successCount++;
+            } else if (res.isRejected()) {
+                rejectedCount++;
+            }
+        }
+
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+
+        assertEquals(1, successCount, "Exactly one duplicate submission must succeed");
+        assertEquals(threads - 1, rejectedCount, "All other concurrent duplicates must be rejected");
+
+        // ACC1 balance was 10,000; after exactly 1 withdrawal of 500, balance must be 9,500
+        try (Connection conn = testConnectionManager.getConnection()) {
+            Account acc = accountDAO.findById(conn, "ACC1").orElseThrow();
+            assertEquals(new BigDecimal("9500.00"), acc.getBalance());
+        }
+    }
+
+    @Test
+    @DisplayName("IDEMPOTENCY: Database uniqueness constraint stops duplicates if application check is bypassed")
+    void testDatabaseUniquenessConstraintStopsDuplicates() throws SQLException {
+        // Pre-insert transaction row directly to simulate a race condition where application-level check was bypassed
+        try (Connection conn = testConnectionManager.getConnection()) {
+            TransactionRecord preExisting = new TransactionRecord(
+                    "TXN-DB-DUP", "ACC1", null, TransactionType.WITHDRAWAL,
+                    new BigDecimal("1000.00"), TransactionStatus.SUCCESS, LocalDateTime.now()
+            );
+            transactionDAO.saveTransaction(conn, preExisting);
+        }
+
+        // Now process a request with the same transactionId
+        TransactionRequest req = new TransactionRequest("TXN-DB-DUP", "ACC1", null, new BigDecimal("1000.00"), TransactionType.WITHDRAWAL);
+        TransactionResult res = engine.process(req);
+
+        assertTrue(res.isRejected());
+        assertTrue(res.message().contains("Duplicate transaction ID") || res.message().contains("already processed"));
+
+        // Balance must remain unchanged at 10,000.00
+        try (Connection conn = testConnectionManager.getConnection()) {
+            Account acc = accountDAO.findById(conn, "ACC1").orElseThrow();
+            assertEquals(new BigDecimal("10000.00"), acc.getBalance());
+        }
+    }
+
+    @Test
+    @DisplayName("DATABASE TRANSACTIONS: Failure rolls back balance changes but persists failure audit trail")
+    void testTransactionRollbackAndFailureAuditPersistence() throws SQLException {
+        TransactionRequest req = new TransactionRequest("TXN-FAIL-AUDIT", "ACC1", null, new BigDecimal("99999.00"), TransactionType.WITHDRAWAL);
+        TransactionResult res = engine.process(req);
+
+        assertTrue(res.isFailed());
+        assertEquals(TransactionStatus.FAILED, res.status());
+
+        // 1. Balance must be rolled back completely
+        try (Connection conn = testConnectionManager.getConnection()) {
+            Account acc = accountDAO.findById(conn, "ACC1").orElseThrow();
+            assertEquals(new BigDecimal("10000.00"), acc.getBalance());
+        }
+
+        // 2. Failure audit trail must be persisted in failed_transaction
+        try (Connection conn = testConnectionManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT error_category, failure_reason FROM failed_transaction WHERE transaction_id = ?")) {
+            ps.setString(1, "TXN-FAIL-AUDIT");
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next(), "Failure diagnostic must be persisted in failed_transaction table");
+                assertEquals("INSUFFICIENT_FUNDS", rs.getString("error_category"));
+                assertTrue(rs.getString("failure_reason").contains("Insufficient balance"));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("CUSTOM EXCEPTIONS: Validation gates reject non-positive amounts and missing IDs")
+    void testCustomExceptionsValidationGates() {
+        // Null transaction ID
+        TransactionRequest req1 = new TransactionRequest(null, "ACC1", null, new BigDecimal("100.00"), TransactionType.WITHDRAWAL);
+        TransactionResult res1 = engine.process(req1);
+        assertTrue(res1.isRejected());
+        assertTrue(res1.message().contains("Transaction ID cannot be null"));
+
+        // Non-positive amount
+        TransactionRequest req2 = new TransactionRequest("TXN-ZERO", "ACC1", null, BigDecimal.ZERO, TransactionType.WITHDRAWAL);
+        TransactionResult res2 = engine.process(req2);
+        assertTrue(res2.isRejected());
+        assertTrue(res2.message().contains("strictly greater than zero"));
     }
 }
